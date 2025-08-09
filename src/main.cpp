@@ -153,6 +153,9 @@ void handleIdleLightSleep(bool isConnected) {
     delay(10);
   }
 
+  // Reset keyboard state in case it got stuck during sleep
+  bleKeyboard.releaseAll();
+
   // Reset idle timer
   lastActivityMs = millis();
 }
@@ -242,6 +245,10 @@ void handleRightArrowPedal(bool isConnected) {
 void updateLedStatus(bool isConnected) {
   static unsigned long btLedLastToggleMs = 0;
   static bool btLedState = false;
+
+  // Power LED is always on when the device is awake.
+  // It's turned off before light sleep and this ensures it's restored.
+  digitalWrite(POWER_LED_PIN, HIGH);
 
   if (isConnected) {
     digitalWrite(BT_LED_PIN, HIGH);
