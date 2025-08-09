@@ -34,10 +34,11 @@
 // =============================================================================
 BleKeyboard bleKeyboard("PipoLaPipe", "ESP32-Pedal", 100);
 
-static const uint32_t LONG_PRESS_MS = 2000;
+static const uint32_t LONG_PRESS_MS = 3000;
 
 bool mainButtonWasPressed = false;
 unsigned long mainButtonPressStartMs = 0;
+bool sleepArmed = false; // set after long-press; sleep on release
 
 bool module2WasPressed = false; // For edge detection
 
@@ -98,28 +99,32 @@ void loop() {
 void handleMainButtonDeepSleep() {
   bool pressed = isActiveLowPressed(MAIN_BUTTON_PIN);
 
+  // Edge: press down
   if (pressed && !mainButtonWasPressed) {
     mainButtonWasPressed = true;
     mainButtonPressStartMs = millis();
   }
 
-  if (pressed && mainButtonWasPressed) {
+  // While held: check for long-press
+  if (pressed && mainButtonWasPressed && !sleepArmed) {
     if (millis() - mainButtonPressStartMs >= LONG_PRESS_MS) {
-      Serial.println("Entering deep sleep. Long-press detected.");
-      digitalWrite(POWER_LED_PIN, LOW);
-      digitalWrite(BT_LED_PIN, LOW);
-      // Wait for button release to avoid instant wake
-      while (isActiveLowPressed(MAIN_BUTTON_PIN)) {
-        delay(10);
-      }
-      esp_sleep_enable_ext0_wakeup(GPIO_NUM_25, 0); // Wake when pin goes LOW
-      delay(50);
-      esp_deep_sleep_start();
+      sleepArmed = true;
+      Serial.println("Long-press detected. Release button to power off...");
     }
   }
 
-  if (!pressed) {
+  // Edge: release
+  if (!pressed && mainButtonWasPressed) {
     mainButtonWasPressed = false;
+    if (sleepArmed) {
+      Serial.println("Entering deep sleep now.");
+      digitalWrite(POWER_LED_PIN, LOW);
+      digitalWrite(BT_LED_PIN, LOW);
+      esp_sleep_enable_ext0_wakeup(GPIO_NUM_25, 0); // Wake when pin goes LOW
+      delay(20);
+      esp_deep_sleep_start();
+    }
+    sleepArmed = false;
   }
 }
 
