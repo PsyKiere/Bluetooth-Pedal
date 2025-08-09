@@ -135,18 +135,17 @@ void handleIdleLightSleep(bool isConnected) {
   digitalWrite(BT_LED_PIN, LOW);
 
   // Configure wakeup sources: wake on main button or pedal press (LOW)
-  gpio_wakeup_enable((gpio_num_t)MAIN_BUTTON_PIN, GPIO_INTR_LOW_LEVEL);
-  gpio_wakeup_enable((gpio_num_t)MODULE2_PIN, GPIO_INTR_LOW_LEVEL);
-  esp_sleep_enable_gpio_wakeup();
+  uint64_t wakeup_mask = (1ULL << MAIN_BUTTON_PIN) | (1ULL << MODULE2_PIN);
+  esp_sleep_enable_ext1_wakeup(wakeup_mask, ESP_EXT1_WAKEUP_ANY_LOW);
 
   esp_light_sleep_start();
 
   // --- WOKE UP FROM LIGHT SLEEP ---
-  uint64_t wakeup_pin_mask = esp_sleep_get_gpio_wakeup_status();
+  uint64_t wakeup_pin_mask = esp_sleep_get_ext1_wakeup_status();
 
-  // Disable GPIO wakeup to prevent it from re-triggering
-  gpio_wakeup_disable((gpio_num_t)MAIN_BUTTON_PIN);
-  gpio_wakeup_disable((gpio_num_t)MODULE2_PIN);
+  // No need to disable ext1 wakeup, it's configured per-sleep
+  // gpio_wakeup_disable((gpio_num_t)MAIN_BUTTON_PIN);
+  // gpio_wakeup_disable((gpio_num_t)MODULE2_PIN);
 
   Serial.println("Woke up from light sleep.");
 
