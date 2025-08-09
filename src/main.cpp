@@ -17,7 +17,8 @@
 // =============================================================================
 // CONSTANTS
 // =============================================================================
-static const uint32_t LONG_PRESS_MS = 3000;
+static const uint32_t LONG_PRESS_OFF_MS = 3000;
+static const uint32_t LONG_PRESS_ON_MS = 2000;
 static const uint16_t BT_LED_BLINK_INTERVAL_MS = 500;
 static const uint8_t KEY_PRESS_DELAY_MS = 30;
 
@@ -48,6 +49,7 @@ BleKeyboard bleKeyboard("PipoLaPipe", "ESP32-Pedal", 100);
 // HELPERS
 // =============================================================================
 static inline bool isActiveLowPressed(int pin) { return digitalRead(pin) == LOW; }
+void enterDeepSleep();
 void goToDeepSleep();
 void handleMainButtonDeepSleep();
 void handleRightArrowPedal(bool isConnected);
@@ -57,6 +59,24 @@ void updateLedStatus(bool isConnected);
 // SETUP - Runs once on boot/reset
 // =============================================================================
 void setup() {
+  // Configure the main button pin early for the power-on check
+  pinMode(MAIN_BUTTON_PIN, INPUT_PULLUP);
+
+  // --- Power-on check: require long press to boot from deep sleep ---
+  if (esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_EXT0) {
+    unsigned long pressStartMs = millis();
+    while (isActiveLowPressed(MAIN_BUTTON_PIN)) {
+      if (millis() - pressStartMs >= LONG_PRESS_ON_MS) {
+        goto continue_boot; // Long press confirmed, continue booting.
+      }
+      delay(10);
+    }
+    // If the loop finishes, the button was released too early. Go back to sleep.
+    Serial.println("Power-on press was too short. Going back to sleep.");
+    enterDeepSleep();
+  }
+
+continue_boot:
   Serial.begin(115200);
   Serial.println("Starting ESP32 Page Turner...");
   // Diagnostic: last reset reason and wakeup cause
@@ -68,7 +88,6 @@ void setup() {
   // --- Configure Pins ---
   pinMode(POWER_LED_PIN, OUTPUT);
   pinMode(BT_LED_PIN, OUTPUT);
-  pinMode(MAIN_BUTTON_PIN, INPUT_PULLUP);
   
   pinMode(MAIN_PEDAL_PIN, INPUT_PULLUP);
   pinMode(MODULE1_PIN, INPUT_PULLUP);
@@ -99,6 +118,20 @@ void loop() {
 // =============================================================================
 
 // --- Enter deep sleep ---
+void enterDeepSleep() {
+  // Ensure RTC domain keeps the pull-up on GPIO 25 during deep sleep
+  rtc_gpio_init(GPIO_NUM_25);
+  rtc_gpio_set_direction(GPIO_NUM_25, RTC_GPIO_MODE_INPUT_ONLY);
+  rtc_gpio_pullup_en(GPIO_NUM_25);
+  rtc_gpio_pulldown_dis(GPIO_NUM_25);
+  rtc_gpio_hold_en(GPIO_NUM_25);
+
+  // Wake when pin goes LOW (button pressed)
+  esp_sleep_enable_ext0_wakeup(GPIO_NUM_25, 0);
+  delay(20);
+  esp_deep_sleep_start();
+}
+
 void goToDeepSleep() {
   Serial.println("Long-press detected. Powering down. Release button to sleep.");
   digitalWrite(POWER_LED_PIN, LOW);
@@ -111,18 +144,7 @@ void goToDeepSleep() {
   delay(50); // Debounce release
 
   Serial.println("Button released. Entering deep sleep now.");
-
-  // Ensure RTC domain keeps the pull-up on GPIO 25 during deep sleep
-  rtc_gpio_init(GPIO_NUM_25);
-  rtc_gpio_set_direction(GPIO_NUM_25, RTC_GPIO_MODE_INPUT_ONLY);
-  rtc_gpio_pullup_en(GPIO_NUM_25);
-  rtc_gpio_pulldown_dis(GPIO_NUM_25);
-  rtc_gpio_hold_en(GPIO_NUM_25);
-
-  // Wake when pin goes LOW (button pressed)
-  esp_sleep_enable_ext0_wakeup(GPIO_NUM_25, 0);
-  delay(20);
-  esp_deep_sleep_start();
+  enterDeepSleep();
 }
 
 // --- On/Off via long-press ---
@@ -142,7 +164,7 @@ void handleMainButtonDeepSleep() {
 
   // While held: check for long-press and power off
   if (pressed && wasPressed && !sleepTriggered) {
-    if (millis() - pressStartMs >= LONG_PRESS_MS) {
+    if (millis() - pressStartMs >= LONG_PRESS_OFF_MS) {
       sleepTriggered = true;
       goToDeepSleep();
     }
