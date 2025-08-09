@@ -79,10 +79,13 @@ void handleConnectionStateChange();
 void setup() {
   Serial.begin(115200);
   Serial.println("Starting ESP32 Page Turner...");
+  // Diagnostic: print last reset reason and wakeup cause
+  Serial.printf("Reset reason: %d, wakeup cause: %d\n", (int)esp_reset_reason(), (int)esp_sleep_get_wakeup_cause());
 
   // --- Configure Pins ---
   pinMode(POWER_LED_PIN, OUTPUT);
   pinMode(BT_LED_PIN, OUTPUT);
+  pinMode(MAIN_BUTTON_PIN, INPUT_PULLUP);
   
   pinMode(MAIN_PEDAL_PIN, INPUT_PULLUP);
   pinMode(MODULE1_PIN, INPUT_PULLUP);
@@ -173,6 +176,10 @@ void startHold() {
   digitalWrite(BT_LED_PIN, LOW);
   delay(100); // Allow serial to print
   esp_sleep_enable_ext0_wakeup(GPIO_NUM_25, 0); // 0 = Wake when pin is LOW
+  // Ensure button is released before entering deep sleep to avoid instant wake
+  while (digitalRead(MAIN_BUTTON_PIN) == LOW) {
+    delay(10);
+  }
   esp_deep_sleep_start();
 }
 
