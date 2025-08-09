@@ -80,26 +80,6 @@ void setup() {
   
   // --- Start Bluetooth ---
   bleKeyboard.begin();
-
-  // If we woke due to button release (we had armed wake on HIGH), go back to deep sleep
-  if (esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_EXT0) {
-    // If button reads HIGH now, it means we just released it. Stay off until next press.
-    if (!isActiveLowPressed(MAIN_BUTTON_PIN)) {
-      Serial.println("Woke on button release; returning to deep sleep until next press.");
-      // Prepare RTC pull-up and hold
-      rtc_gpio_init(GPIO_NUM_25);
-      rtc_gpio_set_direction(GPIO_NUM_25, RTC_GPIO_MODE_INPUT_ONLY);
-      rtc_gpio_pullup_en(GPIO_NUM_25);
-      rtc_gpio_pulldown_dis(GPIO_NUM_25);
-      rtc_gpio_hold_en(GPIO_NUM_25);
-      // Wake on next LOW (next press)
-      esp_sleep_enable_ext0_wakeup(GPIO_NUM_25, 0);
-      digitalWrite(POWER_LED_PIN, LOW);
-      digitalWrite(BT_LED_PIN, LOW);
-      delay(20);
-      esp_deep_sleep_start();
-    }
-  }
 }
 
 // =============================================================================
@@ -141,9 +121,22 @@ void handleMainButtonDeepSleep() {
   if (!pressed && mainButtonWasPressed) {
     mainButtonWasPressed = false;
     if (sleepArmed) {
+      // Debounce release and ensure line stays HIGH before arming wake
+      unsigned long stableStart = millis();
+      while (millis() - stableStart < 200) {
+        if (isActiveLowPressed(MAIN_BUTTON_PIN)) {
+          // Bounced back to LOW; cancel sleep arming
+          sleepArmed = false;
+          Serial.println("Power-off canceled due to button bounce.");
+          return;
+        }
+        delay(5);
+      }
+
       Serial.println("Entering deep sleep now.");
       digitalWrite(POWER_LED_PIN, LOW);
       digitalWrite(BT_LED_PIN, LOW);
+
       // Ensure RTC domain keeps the pull-up on GPIO 25 during deep sleep
       rtc_gpio_init(GPIO_NUM_25);
       rtc_gpio_set_direction(GPIO_NUM_25, RTC_GPIO_MODE_INPUT_ONLY);
@@ -151,10 +144,8 @@ void handleMainButtonDeepSleep() {
       rtc_gpio_pulldown_dis(GPIO_NUM_25);
       rtc_gpio_hold_en(GPIO_NUM_25);
 
-      // Choose wake polarity based on current button state
-      // If currently pressed (LOW), wake on HIGH (release). If not pressed, wake on LOW (next press).
-      uint8_t wakeLevel = isActiveLowPressed(MAIN_BUTTON_PIN) ? 1 : 0;
-      esp_sleep_enable_ext0_wakeup(GPIO_NUM_25, wakeLevel);
+      // Wake when pin goes LOW (button pressed)
+      esp_sleep_enable_ext0_wakeup(GPIO_NUM_25, 0);
       delay(20);
       esp_deep_sleep_start();
     }
