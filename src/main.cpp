@@ -11,6 +11,7 @@
 #include <Arduino.h>
 #include <BleKeyboard.h>
 #include "esp_sleep.h"
+#include "driver/rtc_io.h"
 
 
 // =============================================================================
@@ -61,6 +62,9 @@ void setup() {
   Serial.println("Starting ESP32 Page Turner...");
   // Diagnostic: last reset reason and wakeup cause
   Serial.printf("Reset reason: %d, wakeup cause: %d\n", (int)esp_reset_reason(), (int)esp_sleep_get_wakeup_cause());
+
+  // If previous sleep enabled RTC hold on MAIN_BUTTON_PIN, release it now
+  rtc_gpio_hold_dis(GPIO_NUM_25);
 
   // --- Configure Pins ---
   pinMode(POWER_LED_PIN, OUTPUT);
@@ -117,10 +121,31 @@ void handleMainButtonDeepSleep() {
   if (!pressed && mainButtonWasPressed) {
     mainButtonWasPressed = false;
     if (sleepArmed) {
+      // Debounce release and ensure line stays HIGH before arming wake
+      unsigned long stableStart = millis();
+      while (millis() - stableStart < 200) {
+        if (isActiveLowPressed(MAIN_BUTTON_PIN)) {
+          // Bounced back to LOW; cancel sleep arming
+          sleepArmed = false;
+          Serial.println("Power-off canceled due to button bounce.");
+          return;
+        }
+        delay(5);
+      }
+
       Serial.println("Entering deep sleep now.");
       digitalWrite(POWER_LED_PIN, LOW);
       digitalWrite(BT_LED_PIN, LOW);
-      esp_sleep_enable_ext0_wakeup(GPIO_NUM_25, 0); // Wake when pin goes LOW
+
+      // Ensure RTC domain keeps the pull-up on GPIO 25 during deep sleep
+      rtc_gpio_init(GPIO_NUM_25);
+      rtc_gpio_set_direction(GPIO_NUM_25, RTC_GPIO_MODE_INPUT_ONLY);
+      rtc_gpio_pullup_en(GPIO_NUM_25);
+      rtc_gpio_pulldown_dis(GPIO_NUM_25);
+      rtc_gpio_hold_en(GPIO_NUM_25);
+
+      // Wake when pin goes LOW (button pressed)
+      esp_sleep_enable_ext0_wakeup(GPIO_NUM_25, 0);
       delay(20);
       esp_deep_sleep_start();
     }
