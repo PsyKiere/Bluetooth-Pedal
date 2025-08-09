@@ -142,14 +142,13 @@ void handleIdleLightSleep(bool isConnected) {
   esp_light_sleep_start();
 
   // --- WOKE UP FROM LIGHT SLEEP ---
+  uint64_t wakeup_pin_mask = esp_sleep_get_gpio_wakeup_status();
+
   // Disable GPIO wakeup to prevent it from re-triggering
   gpio_wakeup_disable((gpio_num_t)MAIN_BUTTON_PIN);
   gpio_wakeup_disable((gpio_num_t)MODULE2_PIN);
 
   Serial.println("Woke up from light sleep.");
-
-  // Check which button woke the device.
-  bool pedalWokeUp = isActiveLowPressed(MODULE2_PIN);
 
   // Debounce by waiting for the wakeup button to be released
   while(isActiveLowPressed(MAIN_BUTTON_PIN) || isActiveLowPressed(MODULE2_PIN)) {
@@ -164,7 +163,7 @@ void handleIdleLightSleep(bool isConnected) {
 
   // If the page turner pedal woke the device, perform its action.
   // The main button's only job on wake is to wake the device, no other action needed.
-  if (pedalWokeUp) {
+  if (wakeup_pin_mask & (1ULL << MODULE2_PIN)) {
     Serial.println("Woken up by pedal. Sending key press.");
     bleKeyboard.press(KEY_RIGHT_ARROW);
     delay(KEY_PRESS_DELAY_MS);
