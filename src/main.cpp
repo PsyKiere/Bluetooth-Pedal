@@ -122,10 +122,10 @@ void loop() {
 // CUSTOM FUNCTIONS
 // =============================================================================
 
-int wakeup_gpio; // Variable to store the GPIO that caused wake-up
+int wakeup_gpio = -1; // Variable to store the GPIO that caused wake-up
 
-const gpio_num_t mainButton = MAIN_BUTTON_PIN;
-const gpio_num_t module2Button = MODULE2_PIN;
+const gpio_num_t mainButton = (gpio_num_t)MAIN_BUTTON_PIN;
+const gpio_num_t module2Button = (gpio_num_t)MODULE2_PIN;
 
 // ISR for mainButton
 void IRAM_ATTR handleInterrupt1() {
@@ -149,31 +149,30 @@ void handleIdleLightSleep(bool isConnected) {
   digitalWrite(POWER_LED_PIN, LOW);
   digitalWrite(BT_LED_PIN, LOW);
 
-  // Configure wakeup sources: wake on main button or pedal press (LOW)
+  // Reset the wakeup GPIO variable before sleeping
+  wakeup_gpio = -1;
+
+  // Configure ESP32 native wakeup sources
   gpio_wakeup_enable(mainButton, GPIO_INTR_LOW_LEVEL);
   gpio_wakeup_enable(module2Button, GPIO_INTR_LOW_LEVEL);
-  // Enable GPIO wake-up source
-  esp_err_t result = esp_sleep_enable_gpio_wakeup();
+  esp_sleep_enable_gpio_wakeup();
 
-  if (result == ESP_OK) {
-    Serial.println("GPIO Wake-Up set successfully.");
-  } else {
-    Serial.println("Failed to set GPIO Wake-Up as wake-up source.");
-  }
-
-  // Attach interrupts to GPIO pins
-  attachInterrupt(digitalPinToInterrupt(mainButton), handleInterrupt1, RISING);
-  attachInterrupt(digitalPinToInterrupt(module2Button), handleInterrupt2, RISING);
+  // Attach Arduino-level interrupts to identify the wake source.
+  // This must be on FALLING edge to catch the button press.
+  attachInterrupt(digitalPinToInterrupt(mainButton), handleInterrupt1, FALLING);
+  attachInterrupt(digitalPinToInterrupt(module2Button), handleInterrupt2, FALLING);
 
   esp_light_sleep_start();
 
   // --- WOKE UP FROM LIGHT SLEEP ---
-  // Disable GPIO wakeup to prevent it from re-triggering
-  gpio_wakeup_disable(mainButton);
-  gpio_wakeup_disable(module2Button);
+  // // Disable GPIO wakeup to prevent it from re-triggering
+  // gpio_wakeup_disable(mainButton);
+  // gpio_wakeup_disable(module2Button);
+  // Detach interrupts immediately to prevent them from firing during normal operation.
+  detachInterrupt(digitalPinToInterrupt(mainButton));
+  detachInterrupt(digitalPinToInterrupt(module2Button));
 
   Serial.println("Woke up from light sleep.");
-
 
   Serial.printf("Wake-up caused by GPIO %d\n", wakeup_gpio);
 
