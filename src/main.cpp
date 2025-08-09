@@ -100,9 +100,17 @@ void loop() {
 
 // --- Enter deep sleep ---
 void goToDeepSleep() {
-  Serial.println("Entering deep sleep now.");
+  Serial.println("Long-press detected. Powering down. Release button to sleep.");
   digitalWrite(POWER_LED_PIN, LOW);
   digitalWrite(BT_LED_PIN, LOW);
+
+  // Wait for button release to avoid immediate wakeup
+  while(isActiveLowPressed(MAIN_BUTTON_PIN)) {
+    delay(10);
+  }
+  delay(50); // Debounce release
+
+  Serial.println("Button released. Entering deep sleep now.");
 
   // Ensure RTC domain keeps the pull-up on GPIO 25 during deep sleep
   rtc_gpio_init(GPIO_NUM_25);
@@ -121,6 +129,7 @@ void goToDeepSleep() {
 void handleMainButtonDeepSleep() {
   static bool wasPressed = false;
   static unsigned long pressStartMs = 0;
+  static bool sleepTriggered = false;
 
   bool pressed = isActiveLowPressed(MAIN_BUTTON_PIN);
 
@@ -128,11 +137,13 @@ void handleMainButtonDeepSleep() {
   if (pressed && !wasPressed) {
     wasPressed = true;
     pressStartMs = millis();
+    sleepTriggered = false; // Reset on new press
   }
 
   // While held: check for long-press and power off
-  if (pressed && wasPressed) {
+  if (pressed && wasPressed && !sleepTriggered) {
     if (millis() - pressStartMs >= LONG_PRESS_MS) {
+      sleepTriggered = true;
       goToDeepSleep();
     }
   }
