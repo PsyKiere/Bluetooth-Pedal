@@ -44,6 +44,21 @@ static const uint8_t KEY_PRESS_DELAY_MS = 30;
 // =============================================================================
 BleKeyboard bleKeyboard("PipoLaPipe", "ESP32-Pedal", 100);
 
+// --- State tracking for each pedal ---
+struct PedalState {
+  int pin;
+  int key;
+  bool wasPressed;
+};
+
+PedalState pedals[] = {
+  {MAIN_PEDAL_PIN, KEY_DOWN_ARROW, false},
+  {MODULE1_PIN,    KEY_LEFT_ARROW, false},
+  {MODULE2_PIN,    KEY_RIGHT_ARROW, false},
+  {MODULE3_PIN,    KEY_UP_ARROW,   false}
+};
+const int NUM_PEDALS = sizeof(pedals) / sizeof(PedalState);
+
 
 // =============================================================================
 // HELPERS
@@ -52,7 +67,7 @@ static inline bool isActiveLowPressed(int pin) { return digitalRead(pin) == LOW;
 void enterDeepSleep();
 void goToDeepSleep();
 void handleMainButtonDeepSleep();
-void handleRightArrowPedal(bool isConnected);
+void handlePedalPress(PedalState& pedal, bool isConnected);
 void updateLedStatus(bool isConnected);
 
 // =============================================================================
@@ -107,7 +122,9 @@ void loop() {
   bool connected = bleKeyboard.isConnected();
 
   handleMainButtonDeepSleep();
-  handleRightArrowPedal(connected);
+  for (int i = 0; i < NUM_PEDALS; i++) {
+    handlePedalPress(pedals[i], connected);
+  }
   updateLedStatus(connected);
 
   delay(5);
@@ -176,23 +193,21 @@ void handleMainButtonDeepSleep() {
   }
 }
 
-// --- Right Arrow pedal on MODULE2_PIN ---
-void handleRightArrowPedal(bool isConnected) {
-  static bool wasPressed = false;
-
+// --- Generic Pedal Press Handler ---
+void handlePedalPress(PedalState& pedal, bool isConnected) {
   if (!isConnected) {
-    wasPressed = false;
+    pedal.wasPressed = false;
     return;
   }
 
-  bool pressed = isActiveLowPressed(MODULE2_PIN);
-  if (pressed && !wasPressed) {
-    bleKeyboard.press(KEY_RIGHT_ARROW);
+  bool pressed = isActiveLowPressed(pedal.pin);
+  if (pressed && !pedal.wasPressed) {
+    bleKeyboard.press(pedal.key);
     delay(KEY_PRESS_DELAY_MS);
     bleKeyboard.releaseAll();
-    wasPressed = true;
+    pedal.wasPressed = true;
   } else if (!pressed) {
-    wasPressed = false;
+    pedal.wasPressed = false;
   }
 }
 
