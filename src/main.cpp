@@ -19,6 +19,7 @@
 // =============================================================================
 static const uint32_t LONG_PRESS_OFF_MS = 3000;
 static const uint32_t LONG_PRESS_ON_MS = 2000;
+static const uint32_t IDLE_TIMEOUT_MS = 5000;
 static const uint16_t BT_LED_BLINK_INTERVAL_MS = 500;
 static const uint8_t KEY_PRESS_DELAY_MS = 30;
 
@@ -43,6 +44,7 @@ static const uint8_t KEY_PRESS_DELAY_MS = 30;
 // GLOBAL STATE
 // =============================================================================
 BleKeyboard bleKeyboard("PipoLaPipe", "ESP32-Pedal", 100);
+unsigned long lastActivityMs = 0;
 
 
 // =============================================================================
@@ -51,6 +53,7 @@ BleKeyboard bleKeyboard("PipoLaPipe", "ESP32-Pedal", 100);
 static inline bool isActiveLowPressed(int pin) { return digitalRead(pin) == LOW; }
 void enterDeepSleep();
 void goToDeepSleep();
+void handleIdleLightSleep(bool isConnected);
 void handleMainButtonDeepSleep();
 void handleRightArrowPedal(bool isConnected);
 void updateLedStatus(bool isConnected);
@@ -77,6 +80,7 @@ void setup() {
   }
 
 continue_boot:
+  lastActivityMs = millis();
   Serial.begin(115200);
   Serial.println("Starting ESP32 Page Turner...");
   // Diagnostic: last reset reason and wakeup cause
@@ -106,6 +110,7 @@ continue_boot:
 void loop() {
   bool connected = bleKeyboard.isConnected();
 
+  handleIdleLightSleep(connected);
   handleMainButtonDeepSleep();
   handleRightArrowPedal(connected);
   updateLedStatus(connected);
@@ -116,6 +121,41 @@ void loop() {
 // =============================================================================
 // CUSTOM FUNCTIONS
 // =============================================================================
+
+void handleIdleLightSleep(bool isConnected) {
+  // Only enter light sleep if connected and idle for the timeout period
+  if (!isConnected || (millis() - lastActivityMs < IDLE_TIMEOUT_MS)) {
+    return;
+  }
+
+  Serial.println("Idle timeout. Entering light sleep.");
+
+  // Turn off LEDs before sleeping
+  digitalWrite(POWER_LED_PIN, LOW);
+  digitalWrite(BT_LED_PIN, LOW);
+
+  // Configure wakeup sources: wake on main button or pedal press (LOW)
+  gpio_wakeup_enable((gpio_num_t)MAIN_BUTTON_PIN, GPIO_INTR_LOW_LEVEL);
+  gpio_wakeup_enable((gpio_num_t)MODULE2_PIN, GPIO_INTR_LOW_LEVEL);
+  esp_sleep_enable_gpio_wakeup();
+
+  esp_light_sleep_start();
+
+  // --- WOKE UP FROM LIGHT SLEEP ---
+  // Disable GPIO wakeup to prevent it from re-triggering
+  gpio_wakeup_disable((gpio_num_t)MAIN_BUTTON_PIN);
+  gpio_wakeup_disable((gpio_num_t)MODULE2_PIN);
+
+  Serial.println("Woke up from light sleep.");
+
+  // Debounce by waiting for the wakeup button to be released
+  while(isActiveLowPressed(MAIN_BUTTON_PIN) || isActiveLowPressed(MODULE2_PIN)) {
+    delay(10);
+  }
+
+  // Reset idle timer
+  lastActivityMs = millis();
+}
 
 // --- Enter deep sleep ---
 void enterDeepSleep() {
@@ -160,6 +200,7 @@ void handleMainButtonDeepSleep() {
     wasPressed = true;
     pressStartMs = millis();
     sleepTriggered = false; // Reset on new press
+    lastActivityMs = millis();
   }
 
   // While held: check for long-press and power off
@@ -187,6 +228,7 @@ void handleRightArrowPedal(bool isConnected) {
 
   bool pressed = isActiveLowPressed(MODULE2_PIN);
   if (pressed && !wasPressed) {
+    lastActivityMs = millis();
     bleKeyboard.press(KEY_RIGHT_ARROW);
     delay(KEY_PRESS_DELAY_MS);
     bleKeyboard.releaseAll();
