@@ -148,6 +148,9 @@ void handleIdleLightSleep(bool isConnected) {
 
   Serial.println("Woke up from light sleep.");
 
+  // Check which button woke the device.
+  bool pedalWokeUp = isActiveLowPressed(MODULE2_PIN);
+
   // Debounce by waiting for the wakeup button to be released
   while(isActiveLowPressed(MAIN_BUTTON_PIN) || isActiveLowPressed(MODULE2_PIN)) {
     delay(10);
@@ -158,6 +161,15 @@ void handleIdleLightSleep(bool isConnected) {
 
   // Reset idle timer
   lastActivityMs = millis();
+
+  // If the page turner pedal woke the device, perform its action.
+  // The main button's only job on wake is to wake the device, no other action needed.
+  if (pedalWokeUp) {
+    Serial.println("Woken up by pedal. Sending key press.");
+    bleKeyboard.press(KEY_RIGHT_ARROW);
+    delay(KEY_PRESS_DELAY_MS);
+    bleKeyboard.releaseAll();
+  }
 }
 
 // --- Enter deep sleep ---
