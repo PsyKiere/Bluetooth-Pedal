@@ -122,6 +122,21 @@ void loop() {
 // CUSTOM FUNCTIONS
 // =============================================================================
 
+int wakeup_gpio; // Variable to store the GPIO that caused wake-up
+
+const gpio_num_t mainButton = MAIN_BUTTON_PIN;
+const gpio_num_t module2Button = MODULE2_PIN;
+
+// ISR for mainButton
+void IRAM_ATTR handleInterrupt1() {
+  wakeup_gpio = mainButton;
+}
+
+// ISR for module2Button
+void IRAM_ATTR handleInterrupt2() {
+  wakeup_gpio = module2Button;
+}
+
 void handleIdleLightSleep(bool isConnected) {
   // Only enter light sleep if connected and idle for the timeout period
   if (!isConnected || (millis() - lastActivityMs < IDLE_TIMEOUT_MS)) {
@@ -135,19 +150,32 @@ void handleIdleLightSleep(bool isConnected) {
   digitalWrite(BT_LED_PIN, LOW);
 
   // Configure wakeup sources: wake on main button or pedal press (LOW)
-  uint64_t wakeup_mask = (1ULL << MAIN_BUTTON_PIN) | (1ULL << MODULE2_PIN);
-  esp_sleep_enable_ext1_wakeup(wakeup_mask, ESP_EXT1_WAKEUP_ANY_LOW);
+  gpio_wakeup_enable(mainButton, GPIO_INTR_LOW_LEVEL);
+  gpio_wakeup_enable(module2Button, GPIO_INTR_LOW_LEVEL);
+  // Enable GPIO wake-up source
+  esp_err_t result = esp_sleep_enable_gpio_wakeup();
+
+  if (result == ESP_OK) {
+    Serial.println("GPIO Wake-Up set successfully.");
+  } else {
+    Serial.println("Failed to set GPIO Wake-Up as wake-up source.");
+  }
+
+  // Attach interrupts to GPIO pins
+  attachInterrupt(digitalPinToInterrupt(mainButton), handleInterrupt1, RISING);
+  attachInterrupt(digitalPinToInterrupt(module2Button), handleInterrupt2, RISING);
 
   esp_light_sleep_start();
 
   // --- WOKE UP FROM LIGHT SLEEP ---
-  uint64_t wakeup_pin_mask = esp_sleep_get_ext1_wakeup_status();
-
-  // No need to disable ext1 wakeup, it's configured per-sleep
-  // gpio_wakeup_disable((gpio_num_t)MAIN_BUTTON_PIN);
-  // gpio_wakeup_disable((gpio_num_t)MODULE2_PIN);
+  // Disable GPIO wakeup to prevent it from re-triggering
+  gpio_wakeup_disable(mainButton);
+  gpio_wakeup_disable(module2Button);
 
   Serial.println("Woke up from light sleep.");
+
+
+  Serial.printf("Wake-up caused by GPIO %d\n", wakeup_gpio);
 
   // Debounce by waiting for the wakeup button to be released
   while(isActiveLowPressed(MAIN_BUTTON_PIN) || isActiveLowPressed(MODULE2_PIN)) {
@@ -162,7 +190,7 @@ void handleIdleLightSleep(bool isConnected) {
 
   // If the page turner pedal woke the device, perform its action.
   // The main button's only job on wake is to wake the device, no other action needed.
-  if (wakeup_pin_mask & (1ULL << MODULE2_PIN)) {
+  if (wakeup_gpio == module2Button) {
     Serial.println("Woken up by pedal. Sending key press.");
     bleKeyboard.press(KEY_RIGHT_ARROW);
     delay(KEY_PRESS_DELAY_MS);
