@@ -190,7 +190,18 @@ void handleIdleLightSleep(bool isConnected) {
   // If the page turner pedal woke the device, perform its action.
   // The main button's only job on wake is to wake the device, no other action needed.
   if (wakeup_gpio == module2Button) {
-    Serial.println("Woken up by pedal. Sending key press.");
+    Serial.println("Woken up by pedal. Waiting for BLE to be ready...");
+
+    unsigned long waitStart = millis();
+    while (!bleKeyboard.isConnected()) {
+      if (millis() - waitStart > 2000) { // 2-second timeout
+        Serial.println("BLE reconnection timed out.");
+        return; // Give up
+      }
+      delay(10);
+    }
+    
+    Serial.println("BLE ready. Sending key press.");
     bleKeyboard.press(KEY_RIGHT_ARROW);
     delay(KEY_PRESS_DELAY_MS);
     bleKeyboard.releaseAll();
