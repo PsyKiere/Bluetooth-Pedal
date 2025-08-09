@@ -15,6 +15,14 @@
 
 
 // =============================================================================
+// CONSTANTS
+// =============================================================================
+static const uint32_t LONG_PRESS_MS = 3000;
+static const uint16_t BT_LED_BLINK_INTERVAL_MS = 500;
+static const uint8_t KEY_PRESS_DELAY_MS = 30;
+
+
+// =============================================================================
 // PIN DEFINITIONS
 // =============================================================================
 // --- LEDs ---
@@ -35,21 +43,12 @@
 // =============================================================================
 BleKeyboard bleKeyboard("PipoLaPipe", "ESP32-Pedal", 100);
 
-static const uint32_t LONG_PRESS_MS = 3000;
-
-bool mainButtonWasPressed = false;
-unsigned long mainButtonPressStartMs = 0;
-bool sleepArmed = false; // set after long-press; sleep on release
-
-bool module2WasPressed = false; // For edge detection
-
-unsigned long btLedLastToggleMs = 0;
-bool btLedState = false;
 
 // =============================================================================
 // HELPERS
 // =============================================================================
 static inline bool isActiveLowPressed(int pin) { return digitalRead(pin) == LOW; }
+void goToDeepSleep();
 void handleMainButtonDeepSleep();
 void handleRightArrowPedal(bool isConnected);
 void updateLedStatus(bool isConnected);
@@ -99,87 +98,82 @@ void loop() {
 // CUSTOM FUNCTIONS
 // =============================================================================
 
+// --- Enter deep sleep ---
+void goToDeepSleep() {
+  Serial.println("Entering deep sleep now.");
+  digitalWrite(POWER_LED_PIN, LOW);
+  digitalWrite(BT_LED_PIN, LOW);
+
+  // Ensure RTC domain keeps the pull-up on GPIO 25 during deep sleep
+  rtc_gpio_init(GPIO_NUM_25);
+  rtc_gpio_set_direction(GPIO_NUM_25, RTC_GPIO_MODE_INPUT_ONLY);
+  rtc_gpio_pullup_en(GPIO_NUM_25);
+  rtc_gpio_pulldown_dis(GPIO_NUM_25);
+  rtc_gpio_hold_en(GPIO_NUM_25);
+
+  // Wake when pin goes LOW (button pressed)
+  esp_sleep_enable_ext0_wakeup(GPIO_NUM_25, 0);
+  delay(20);
+  esp_deep_sleep_start();
+}
+
 // --- On/Off via long-press ---
 void handleMainButtonDeepSleep() {
+  static bool wasPressed = false;
+  static unsigned long pressStartMs = 0;
+
   bool pressed = isActiveLowPressed(MAIN_BUTTON_PIN);
 
   // Edge: press down
-  if (pressed && !mainButtonWasPressed) {
-    mainButtonWasPressed = true;
-    mainButtonPressStartMs = millis();
+  if (pressed && !wasPressed) {
+    wasPressed = true;
+    pressStartMs = millis();
   }
 
-  // While held: check for long-press
-  if (pressed && mainButtonWasPressed && !sleepArmed) {
-    if (millis() - mainButtonPressStartMs >= LONG_PRESS_MS) {
-      sleepArmed = true;
-      Serial.println("Long-press detected. Release button to power off...");
+  // While held: check for long-press and power off
+  if (pressed && wasPressed) {
+    if (millis() - pressStartMs >= LONG_PRESS_MS) {
+      goToDeepSleep();
     }
   }
 
   // Edge: release
-  if (!pressed && mainButtonWasPressed) {
-    mainButtonWasPressed = false;
-    if (sleepArmed) {
-      // Debounce release and ensure line stays HIGH before arming wake
-      unsigned long stableStart = millis();
-      while (millis() - stableStart < 200) {
-        if (isActiveLowPressed(MAIN_BUTTON_PIN)) {
-          // Bounced back to LOW; cancel sleep arming
-          sleepArmed = false;
-          Serial.println("Power-off canceled due to button bounce.");
-          return;
-        }
-        delay(5);
-      }
-
-      Serial.println("Entering deep sleep now.");
-      digitalWrite(POWER_LED_PIN, LOW);
-      digitalWrite(BT_LED_PIN, LOW);
-
-      // Ensure RTC domain keeps the pull-up on GPIO 25 during deep sleep
-      rtc_gpio_init(GPIO_NUM_25);
-      rtc_gpio_set_direction(GPIO_NUM_25, RTC_GPIO_MODE_INPUT_ONLY);
-      rtc_gpio_pullup_en(GPIO_NUM_25);
-      rtc_gpio_pulldown_dis(GPIO_NUM_25);
-      rtc_gpio_hold_en(GPIO_NUM_25);
-
-      // Wake when pin goes LOW (button pressed)
-      esp_sleep_enable_ext0_wakeup(GPIO_NUM_25, 0);
-      delay(20);
-      esp_deep_sleep_start();
-    }
-    sleepArmed = false;
+  if (!pressed && wasPressed) {
+    wasPressed = false;
   }
 }
 
 // --- Right Arrow pedal on MODULE2_PIN ---
 void handleRightArrowPedal(bool isConnected) {
+  static bool wasPressed = false;
+
   if (!isConnected) {
-    module2WasPressed = false;
+    wasPressed = false;
     return;
   }
 
   bool pressed = isActiveLowPressed(MODULE2_PIN);
-  if (pressed && !module2WasPressed) {
+  if (pressed && !wasPressed) {
     bleKeyboard.press(KEY_RIGHT_ARROW);
-    delay(30);
+    delay(KEY_PRESS_DELAY_MS);
     bleKeyboard.releaseAll();
-    module2WasPressed = true;
+    wasPressed = true;
   } else if (!pressed) {
-    module2WasPressed = false;
+    wasPressed = false;
   }
 }
 
 // --- LEDs: power always on; BT solid when connected, blink when not ---
 void updateLedStatus(bool isConnected) {
-  digitalWrite(POWER_LED_PIN, HIGH);
+  static unsigned long btLedLastToggleMs = 0;
+  static bool btLedState = false;
+
   if (isConnected) {
     digitalWrite(BT_LED_PIN, HIGH);
     btLedState = true;
   } else {
     unsigned long now = millis();
-    if (now - btLedLastToggleMs >= 500) {
+    if (now - btLedLastToggleMs >= BT_LED_BLINK_INTERVAL_MS) {
       btLedLastToggleMs = now;
       btLedState = !btLedState;
       digitalWrite(BT_LED_PIN, btLedState ? HIGH : LOW);
